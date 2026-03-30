@@ -1,0 +1,14 @@
+### 1. 登录接口 (测试完毕后，IDEA 会自动在后台帮你记住 Session/Cookie)
+POST http://localhost:8123/api/user/login
+Content-Type: application/json
+
+{
+  "userAccount": "maple",
+  "userPassword": "@Pzj20021215"
+}
+
+### 2. 测试你的 AI 流式输出接口 (直接点击左侧的绿色箭头运行)
+### 测试 AI 流式代码生成接口 (SSE)
+GET http://localhost:8123/api/app/chat/gen/code?appId=395848009175584768&message=生成任务记录网站
+Accept: text/event-stream
+Cache-Control: no-cache

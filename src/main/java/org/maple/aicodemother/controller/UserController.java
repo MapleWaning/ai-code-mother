@@ -3,6 +3,7 @@ package org.maple.aicodemother.controller;
 import cn.hutool.core.bean.BeanUtil;
 import com.mybatisflex.core.paginate.Page;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.annotation.AuthCheck;
 import org.maple.aicodemother.common.BaseResponse;
@@ -36,10 +37,11 @@ import java.util.List;
 @Slf4j
 @RestController
 @RequestMapping("/user")
+@RequiredArgsConstructor
 public class UserController {
 
-    @Autowired
-    private UserService userService;
+
+    private final UserService userService;
 
     /**
      * 创建用户
