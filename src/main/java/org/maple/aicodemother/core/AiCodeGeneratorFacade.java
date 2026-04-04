@@ -1,8 +1,10 @@
 package org.maple.aicodemother.core;
 
 import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.AiCodeGeneratorService;
+import org.maple.aicodemother.ai.AiCodeGeneratorServiceFactory;
 import org.maple.aicodemother.ai.model.HtmlCodeResult;
 import org.maple.aicodemother.ai.model.MultiFileCodeResult;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
@@ -17,9 +19,10 @@ import java.io.File;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class AiCodeGeneratorFacade {
-    @Resource
-    private AiCodeGeneratorService aiCodeGeneratorService;
+
+    private final AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
 
     /**
      * 通用流式代码处理方法
@@ -56,6 +59,7 @@ public class AiCodeGeneratorFacade {
      * @return 保存的目录
      */
     public File generateAndSaveCode(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
+        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
@@ -82,6 +86,7 @@ public class AiCodeGeneratorFacade {
      * @param codeGenTypeEnum 生成类型
      */
     public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
+        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }

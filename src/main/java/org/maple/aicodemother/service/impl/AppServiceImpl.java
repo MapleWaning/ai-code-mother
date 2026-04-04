@@ -7,6 +7,7 @@ import cn.hutool.core.util.StrUtil;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
 import org.maple.aicodemother.constant.AppConstant;
 import org.maple.aicodemother.core.AiCodeGeneratorFacade;
@@ -17,15 +18,19 @@ import org.maple.aicodemother.model.dto.app.AppQueryRequest;
 import org.maple.aicodemother.model.entity.App;
 import org.maple.aicodemother.mapper.AppMapper;
 import org.maple.aicodemother.model.entity.User;
+import org.maple.aicodemother.model.enums.ChatHistoryMessageTypeEnum;
 import org.maple.aicodemother.model.vo.AppVO;
 import org.maple.aicodemother.model.vo.UserVO;
 import org.maple.aicodemother.service.AppService;
+import org.maple.aicodemother.service.ChatHistoryService;
 import org.maple.aicodemother.service.UserService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.io.File;
+import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +43,7 @@ import java.util.stream.Collectors;
  *
  * @author <a href="https://github.com/MapleWaning">Maple</a>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppService{
@@ -45,6 +51,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private final UserService userService;
 
     private final AiCodeGeneratorFacade aiCodeGeneratorFacade;
+
+    private final ChatHistoryService chatHistoryService;
 
     @Override
     public AppVO getAppVO(App app) {
@@ -122,7 +130,25 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         if(codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
         }
-        return aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
+        chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
+        Flux<String> stringFlux = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
+        StringBuilder aiResponseBuilder = new StringBuilder();
+        return stringFlux
+                .map(chunk ->{
+                aiResponseBuilder.append(chunk);
+                return chunk;
+                })
+                .doOnComplete(() -> {
+                    String aiResponse = aiResponseBuilder.toString();
+                    if(StrUtil.isNotBlank(aiResponse)) {
+                        chatHistoryService.addChatMessage(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                    }
+                })
+                .doOnError(error -> {
+                    String errorMessage = "代码生成过程中发生错误: " + error.getMessage();
+                    // 这里可以记录日志，或者做其他的错误处理
+                    chatHistoryService.addChatMessage(appId, errorMessage, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                });
     }
 
     @Override
@@ -163,6 +189,25 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         ThrowUtils.throwIf(!result, ErrorCode.SYSTEM_ERROR, "更新应用部署信息失败");
         // 这里直接返回部署的访问地址，实际项目中可能需要更复杂的部署流程
         return StrUtil.format("{}/{}/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+    }
+
+    @Override
+    public boolean removeById(Serializable id) {
+        if(id == null) {
+            return false;
+        }
+        Long appId = Long.valueOf(id.toString());
+        if(appId <= 0) {
+            return false;
+        }
+        try {
+            // 删除应用的同时，删除相关的对话历史
+            chatHistoryService.deleteByAppId(appId);
+        } catch (Exception e) {
+            // 这里可以记录日志，或者做其他的错误处理
+            log.error("删除应用关联历史记录失败： {}",e.getMessage());
+        }
+        return super.removeById(id);
     }
 
 }

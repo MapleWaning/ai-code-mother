@@ -1,6 +1,8 @@
 package org.maple.aicodemother.ai;
 
+import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
+import dev.langchain4j.service.UserMessage;
 import org.maple.aicodemother.ai.model.HtmlCodeResult;
 import org.maple.aicodemother.ai.model.MultiFileCodeResult;
 import reactor.core.publisher.Flux;
