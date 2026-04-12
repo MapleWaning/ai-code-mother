@@ -1,5 +1,9 @@
 package org.maple.aicodemother.core;
 
+import cn.hutool.json.JSONUtil;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.service.tool.ToolExecution;
+import dev.langchain4j.service.TokenStream;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -8,6 +12,9 @@ import org.maple.aicodemother.ai.AiCodeGeneratorServiceFactory;
 import org.maple.aicodemother.ai.model.HtmlCodeResult;
 import org.maple.aicodemother.ai.model.MultiFileCodeResult;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
+import org.maple.aicodemother.ai.model.message.AiResponseMessage;
+import org.maple.aicodemother.ai.model.message.ToolExecutedMessage;
+import org.maple.aicodemother.ai.model.message.ToolRequestMessage;
 import org.maple.aicodemother.exception.BusinessException;
 import org.maple.aicodemother.exception.ErrorCode;
 import org.maple.aicodemother.parser.CodeParserExecutor;
@@ -86,7 +93,7 @@ public class AiCodeGeneratorFacade {
      * @param codeGenTypeEnum 生成类型
      */
     public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
-        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
+        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId, codeGenTypeEnum);
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
@@ -99,11 +106,46 @@ public class AiCodeGeneratorFacade {
                 Flux<String> codeStream = aiCodeGeneratorService.generateMultiFileCodeStream(userMessage);
                 yield processCodeStream(codeStream, CodeGenTypeEnum.MULTI_FILE,appId);
             }
+            case VUE_PROJECT -> {
+                TokenStream codeStream = aiCodeGeneratorService.generateVueProjectCodeStream(appId, userMessage);
+                yield processTokenStream(codeStream);
+            }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, errorMessage);
             }
         };
+    }
+
+    /**
+     * 将 TokenStream 转换为 Flux<String>，并传递工具调用信息
+     *
+     * @param tokenStream TokenStream 对象
+     * @return Flux<String> 流式响应
+     */
+    private Flux<String> processTokenStream(TokenStream tokenStream) {
+        return Flux.create(sink -> {
+            tokenStream.onPartialResponse((String partialResponse) -> {
+                        AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
+                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
+                    })
+                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                        ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
+                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
+                    })
+                    .onToolExecuted((ToolExecution toolExecution) -> {
+                        ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
+                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
+                    })
+                    .onCompleteResponse((ChatResponse response) -> {
+                        sink.complete();
+                    })
+                    .onError((Throwable error) -> {
+                        error.printStackTrace();
+                        sink.error(error);
+                    })
+                    .start();
+        });
     }
 
 

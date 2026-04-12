@@ -5,7 +5,12 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.maple.aicodemother.ai.model.HtmlCodeResult;
 import org.maple.aicodemother.ai.model.MultiFileCodeResult;
+import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
+import org.maple.aicodemother.core.AiCodeGeneratorFacade;
 import org.springframework.boot.test.context.SpringBootTest;
+import reactor.core.publisher.Flux;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -14,6 +19,7 @@ class AiCodeGeneratorServiceTest {
 
     @Resource
     private AiCodeGeneratorService aiCodeGeneratorService;
+
 
     @Test
     void generateHtmlCode() {
@@ -38,5 +44,8 @@ class AiCodeGeneratorServiceTest {
 //        result = aiCodeGeneratorService.generateHtmlCode(2, "不要生成网站，告诉我你刚刚做了什么？");
 //        Assertions.assertNotNull(result);
 //    }
+
+
+
 
 }

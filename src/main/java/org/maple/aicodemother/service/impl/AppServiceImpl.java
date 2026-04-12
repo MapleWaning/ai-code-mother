@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
 import org.maple.aicodemother.constant.AppConstant;
 import org.maple.aicodemother.core.AiCodeGeneratorFacade;
+import org.maple.aicodemother.core.builder.VueProjectBuilder;
+import org.maple.aicodemother.core.handler.StreamHandlerExecutor;
 import org.maple.aicodemother.exception.BusinessException;
 import org.maple.aicodemother.exception.ErrorCode;
 import org.maple.aicodemother.exception.ThrowUtils;
@@ -53,6 +55,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private final AiCodeGeneratorFacade aiCodeGeneratorFacade;
 
     private final ChatHistoryService chatHistoryService;
+    private final StreamHandlerExecutor streamHandlerExecutor;
+    private final VueProjectBuilder vueProjectBuilder;
 
     @Override
     public AppVO getAppVO(App app) {
@@ -132,23 +136,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         }
         chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
         Flux<String> stringFlux = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
-        StringBuilder aiResponseBuilder = new StringBuilder();
-        return stringFlux
-                .map(chunk ->{
-                aiResponseBuilder.append(chunk);
-                return chunk;
-                })
-                .doOnComplete(() -> {
-                    String aiResponse = aiResponseBuilder.toString();
-                    if(StrUtil.isNotBlank(aiResponse)) {
-                        chatHistoryService.addChatMessage(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                    }
-                })
-                .doOnError(error -> {
-                    String errorMessage = "代码生成过程中发生错误: " + error.getMessage();
-                    // 这里可以记录日志，或者做其他的错误处理
-                    chatHistoryService.addChatMessage(appId, errorMessage, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
-                });
+        return streamHandlerExecutor.doExecute(stringFlux,chatHistoryService,appId, loginUser,codeGenTypeEnum);
     }
 
     @Override
@@ -170,6 +158,16 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         File sourceDir = new File(sourceDirPath);
         if (!sourceDir.exists() || !sourceDir.isDirectory()) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "应用代码目录不存在");
+        }
+        CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenType);
+        if(codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT){
+            // 如果是 Vue 项目，部署前需要先构建项目
+            boolean buildResult = vueProjectBuilder.buildProject(sourceDirPath);
+            ThrowUtils.throwIf(!buildResult, ErrorCode.SYSTEM_ERROR, "Vue项目构建失败，无法部署");
+            File distDir = new File(sourceDirPath, "dist");
+            ThrowUtils.throwIf(!distDir.exists(),ErrorCode.SYSTEM_ERROR, "Vue项目部署失败，dist目录不存在，无法找到构建产物");
+            sourceDir = distDir;
+            log.info("Vue项目构建成功，准备部署dist目录：{}", distDir.getAbsolutePath());
         }
         String destDirPath = AppConstant.CODE_DEPLOY_ROOT_DIR + File.separator + deployKey;
         File destDir = new File(destDirPath);

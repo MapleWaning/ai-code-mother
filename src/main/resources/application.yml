@@ -28,6 +28,7 @@ spring:
     store-type: redis
     # session 30 天过期
     timeout: 2592000
+
 server:
   port: 8123
   servlet:
