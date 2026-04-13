@@ -1,5 +1,6 @@
 package org.maple.aicodemother.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
@@ -8,6 +9,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.maple.aicodemother.ai.AiCodeGenTypeRoutingService;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
 import org.maple.aicodemother.constant.AppConstant;
 import org.maple.aicodemother.core.AiCodeGeneratorFacade;
@@ -16,6 +18,7 @@ import org.maple.aicodemother.core.handler.StreamHandlerExecutor;
 import org.maple.aicodemother.exception.BusinessException;
 import org.maple.aicodemother.exception.ErrorCode;
 import org.maple.aicodemother.exception.ThrowUtils;
+import org.maple.aicodemother.model.dto.app.AppAddRequest;
 import org.maple.aicodemother.model.dto.app.AppQueryRequest;
 import org.maple.aicodemother.model.entity.App;
 import org.maple.aicodemother.mapper.AppMapper;
@@ -25,9 +28,9 @@ import org.maple.aicodemother.model.vo.AppVO;
 import org.maple.aicodemother.model.vo.UserVO;
 import org.maple.aicodemother.service.AppService;
 import org.maple.aicodemother.service.ChatHistoryService;
+import org.maple.aicodemother.service.ScreenshotService;
 import org.maple.aicodemother.service.UserService;
 import org.springframework.beans.BeanUtils;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -57,6 +60,32 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private final ChatHistoryService chatHistoryService;
     private final StreamHandlerExecutor streamHandlerExecutor;
     private final VueProjectBuilder vueProjectBuilder;
+    private final ScreenshotService screenshotService;
+
+    private final AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService;
+
+    @Override
+    public Long createApp(AppAddRequest appAddRequest, User loginUser) {
+        // 参数校验
+        String initPrompt = appAddRequest.getInitPrompt();
+        ThrowUtils.throwIf(StrUtil.isBlank(initPrompt), ErrorCode.PARAMS_ERROR, "初始化 prompt 不能为空");
+        // 构造入库对象
+        App app = new App();
+        BeanUtil.copyProperties(appAddRequest, app);
+        app.setUserId(loginUser.getId());
+        // 应用名称暂时为 initPrompt 前 12 位
+        app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
+        // 使用 AI 智能选择代码生成类型
+        CodeGenTypeEnum selectedCodeGenType = aiCodeGenTypeRoutingService.routeCodeGenType(initPrompt);
+        app.setCodeGenType(selectedCodeGenType.getValue());
+        // 插入数据库
+        boolean result = this.save(app);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
+        return app.getId();
+    }
+
+
 
     @Override
     public AppVO getAppVO(App app) {
@@ -185,8 +214,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         updateApp.setDeployedTime(LocalDateTime.now());
         boolean result = this.updateById(updateApp);
         ThrowUtils.throwIf(!result, ErrorCode.SYSTEM_ERROR, "更新应用部署信息失败");
+        String appDeployUrl = StrUtil.format("{}/{}/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+        generateAppScreenshotAsync(appId,appDeployUrl);
         // 这里直接返回部署的访问地址，实际项目中可能需要更复杂的部署流程
-        return StrUtil.format("{}/{}/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+        return appDeployUrl;
     }
 
     @Override
@@ -207,5 +238,29 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         }
         return super.removeById(id);
     }
+
+
+
+    /**
+     * 异步生成应用截图并更新封面
+     *
+     * @param appId  应用ID
+     * @param appUrl 应用访问URL
+     */
+    @Override
+    public void generateAppScreenshotAsync(Long appId, String appUrl) {
+        // 使用虚拟线程异步执行
+        Thread.startVirtualThread(() -> {
+            // 调用截图服务生成截图并上传
+            String screenshotUrl = screenshotService.generateAndUploadScreenshot(appUrl);
+            // 更新应用封面字段
+            App updateApp = new App();
+            updateApp.setId(appId);
+            updateApp.setCover(screenshotUrl);
+            boolean updated = this.updateById(updateApp);
+            ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "更新应用封面字段失败");
+        });
+    }
+
 
 }
