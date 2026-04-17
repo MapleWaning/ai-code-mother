@@ -8,15 +8,13 @@ import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
-import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
-import org.maple.aicodemother.ai.tools.FileWriteTool;
+import org.maple.aicodemother.ai.tools.*;
 import org.maple.aicodemother.exception.BusinessException;
 import org.maple.aicodemother.exception.ErrorCode;
 import org.maple.aicodemother.service.ChatHistoryService;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
@@ -36,6 +34,9 @@ public class AiCodeGeneratorServiceFactory {
     private final RedisChatMemoryStore redisChatMemoryStore;
 
     private final ChatHistoryService chatHistoryService;
+
+    private final ToolManager toolManager;
+
 
     /**
      * AI 服务实例缓存
@@ -92,7 +93,7 @@ public class AiCodeGeneratorServiceFactory {
                     .streamingChatModel(reasoningStreamingChatModel)
                     //由于langchain4j的懒加载机制，如果不在这里设置memoryProvider，会自动丢弃memoryId，导致工具调用失败
                     .chatMemoryProvider(memoryId -> chatMemory)
-                    .tools(new FileWriteTool())
+                    .tools((Object[])toolManager.getAllTools())
                     .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
                             toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                     ))

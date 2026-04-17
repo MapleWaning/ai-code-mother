@@ -1,26 +1,28 @@
 package org.maple.aicodemother.ai.tools;
 
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.json.JSONObject;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolMemoryId;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.constant.AppConstant;
+import org.maple.aicodemother.utils.ProjectFileSystemUtil;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * 文件写入工具
  * 支持 AI 通过工具调用的方式写入文件
  */
 @Slf4j
-public class FileWriteTool {
+@Component
+public class FileWriteTool extends BaseTool{
 
     @Tool("写入文件到指定路径")
     public String writeFile(
@@ -48,14 +50,14 @@ public class FileWriteTool {
                     StandardOpenOption.CREATE,
                     StandardOpenOption.TRUNCATE_EXISTING);
             log.info("成功写入文件: {}", path.toAbsolutePath());
-            String existingFiles = scanProjectFiles(projectRoot);
+            String existingFilesTree = ProjectFileSystemUtil.generateProjectTree(projectRoot);
             // 注意要返回相对路径，不能让 AI 把文件绝对路径返回给用户
             return String.format(
                     "文件 [%s] 写入成功！\n" +
                             "当前已存在的文件：%s\n" +
                             "请检查是否已经完成了基础项目结构。不要过度设计！如果核心文件已生成完毕，绝不要再画蛇添足创建新文件，请立刻结束任务！",
                     relativeFilePath,
-                    existingFiles
+                    existingFilesTree
             );
         } catch (IOException e) {
             String errorMessage = "文件写入失败: " + relativeFilePath + ", 错误: " + e.getMessage();
@@ -63,28 +65,28 @@ public class FileWriteTool {
             return errorMessage;
         }
     }
-    /**
-     * 辅助方法：递归扫描目录，返回相对路径列表
-     */
-    private String scanProjectFiles(Path projectRoot) {
-        if (!Files.exists(projectRoot)) {
-            return "空";
-        }
-        try (Stream<Path> walk = Files.walk(projectRoot)) {
-            List<String> fileList = walk.filter(Files::isRegularFile)
-                    .map(projectRoot::relativize) // 获取相对路径
-                    .map(Path::toString)
-                    .map(p -> p.replace("\\", "/")) // 统一使用正斜杠
-                    .collect(Collectors.toList());
 
-            if (fileList.isEmpty()) {
-                return "空";
-            }
-            return String.join(", ", fileList);
-        } catch (IOException e) {
-            log.error("扫描目录失败", e);
-            return "无法获取文件列表";
-        }
+    @Override
+    public String getToolName() {
+        return "writeFile";
+    }
+
+    @Override
+    public String getDisplayName() {
+        return "写入文件";
+    }
+
+    @Override
+    public String generateToolExecutedResult(JSONObject arguments) {
+        String relativeFilePath = arguments.getStr("relativeFilePath");
+        String suffix = FileUtil.getSuffix(relativeFilePath);
+        String content = arguments.getStr("content");
+        return String.format("""
+                        [工具调用] %s %s
+                        ```%s
+                        %s
+                        ```
+                        """, getDisplayName(), relativeFilePath, suffix, content);
     }
 }
 
