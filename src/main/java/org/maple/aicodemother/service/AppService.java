@@ -1,5 +1,6 @@
 package org.maple.aicodemother.service;
 
+import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.service.IService;
 import org.maple.aicodemother.model.dto.app.AppAddRequest;
@@ -7,6 +8,7 @@ import org.maple.aicodemother.model.dto.app.AppQueryRequest;
 import org.maple.aicodemother.model.entity.App;
 import org.maple.aicodemother.model.entity.User;
 import org.maple.aicodemother.model.vo.AppVO;
+import org.springframework.cache.annotation.Cacheable;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -31,4 +33,7 @@ public interface AppService extends IService<App> {
     String deployApp(Long appId, User loginUser);
 
     void generateAppScreenshotAsync(Long appId, String appUrl);
+
+    @Cacheable(value = "good_app_page", key = "...", condition = "...")
+    Page<AppVO> listGoodAppVO(AppQueryRequest appQueryRequest);
 }

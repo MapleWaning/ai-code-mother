@@ -5,11 +5,13 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.AiCodeGenTypeRoutingService;
+import org.maple.aicodemother.ai.AiCodeGenTypeRoutingServiceFactory;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
 import org.maple.aicodemother.constant.AppConstant;
 import org.maple.aicodemother.core.AiCodeGeneratorFacade;
@@ -31,6 +33,7 @@ import org.maple.aicodemother.service.ChatHistoryService;
 import org.maple.aicodemother.service.ScreenshotService;
 import org.maple.aicodemother.service.UserService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -62,7 +65,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private final VueProjectBuilder vueProjectBuilder;
     private final ScreenshotService screenshotService;
 
-    private final AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService;
+    private final AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
 
     @Override
     public Long createApp(AppAddRequest appAddRequest, User loginUser) {
@@ -76,6 +79,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         // 应用名称暂时为 initPrompt 前 12 位
         app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
         // 使用 AI 智能选择代码生成类型
+        AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService = aiCodeGenTypeRoutingServiceFactory.createAiCodeGenTypeRoutingService();
         CodeGenTypeEnum selectedCodeGenType = aiCodeGenTypeRoutingService.routeCodeGenType(initPrompt);
         app.setCodeGenType(selectedCodeGenType.getValue());
         // 插入数据库
@@ -260,6 +264,30 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             boolean updated = this.updateById(updateApp);
             ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "更新应用封面字段失败");
         });
+    }
+
+    @Cacheable(
+            value = "good_app_page",
+            key = "T(org.maple.aicodemother.utils.CacheKeyUtils).generateKey(#appQueryRequest)",
+            condition = "#appQueryRequest != null && #appQueryRequest.pageNum <= 10"
+    )
+    @Override
+    public Page<AppVO> listGoodAppVO(AppQueryRequest appQueryRequest) {
+        // 将 Controller 里的逻辑搬移到这里
+        appQueryRequest.setPriority(AppConstant.GOOD_APP_PRIORITY);
+        QueryWrapper queryWrapper = this.getQueryWrapper(appQueryRequest);
+
+        long pageSize = appQueryRequest.getPageSize();
+        ThrowUtils.throwIf(pageSize > 20, ErrorCode.PARAMS_ERROR, "每页最多查询 20 个应用");
+        long pageNum = appQueryRequest.getPageNum();
+
+        // 调用 MyBatis-Plus 自带的 page 方法
+        Page<App> appPage = this.page(Page.of(pageNum, pageSize), queryWrapper);
+        Page<AppVO> appVOPage = new Page<>(pageNum, pageSize, appPage.getTotalRow());
+        List<AppVO> appVOList = this.getAppVOList(appPage.getRecords());
+        appVOPage.setRecords(appVOList);
+        // 封装 VO
+        return appVOPage; // 自定义一个转换方法
     }
 
 

@@ -3,7 +3,12 @@ package org.maple.aicodemother.ai;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
 import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.maple.aicodemother.ai.guardrail.PromptSafetyInputGuardrail;
+import org.maple.aicodemother.ai.guardrail.RetryOutputGuardrail;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,18 +19,23 @@ import org.springframework.context.annotation.Configuration;
  */
 @Slf4j
 @Configuration
+@RequiredArgsConstructor
 public class AiCodeGenTypeRoutingServiceFactory {
 
-    @Resource
-    private ChatModel chatModel;
+
+    @Qualifier("routingChatModelPrototype")
+    private final ObjectProvider<ChatModel> routingChatModelProvider;
 
     /**
      * 创建AI代码生成类型路由服务实例
      */
     @Bean
-    public AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService() {
+    public AiCodeGenTypeRoutingService createAiCodeGenTypeRoutingService() {
+        ChatModel chatModel = routingChatModelProvider.getObject();
         return AiServices.builder(AiCodeGenTypeRoutingService.class)
                 .chatModel(chatModel)
+                .inputGuardrails(new PromptSafetyInputGuardrail())
+                .outputGuardrails(new RetryOutputGuardrail())
                 .build();
     }
 }

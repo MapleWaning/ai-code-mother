@@ -1,4 +1,7 @@
 spring:
+  mvc:
+    async:
+      request-timeout: 3600000 # 设置为 1 小时（毫秒）
   profiles:
     active: local
   application:

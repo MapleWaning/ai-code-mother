@@ -14,15 +14,15 @@ public interface AiCodeGeneratorService {
     @SystemMessage(fromResource = "prompt/codegen-html-system-prompt.txt")
     Flux<String> generateHtmlCodeStream(String userMessage);
 
-    @SystemMessage(fromResource = "prompt/codegen-html-system-prompt.txt")
-    HtmlCodeResult generateHtmlCode(String userMessage);
+//    @SystemMessage(fromResource = "prompt/codegen-html-system-prompt.txt")
+//    HtmlCodeResult generateHtmlCode(String userMessage);
 
     //生成多文件代码
     @SystemMessage(fromResource = "prompt/codegen-multi-file-system-prompt.txt")
     Flux<String> generateMultiFileCodeStream(String userMessage);
 
-    @SystemMessage(fromResource = "prompt/codegen-multi-file-system-prompt.txt")
-    MultiFileCodeResult generateMultiFileCode(String userMessage);
+//    @SystemMessage(fromResource = "prompt/codegen-multi-file-system-prompt.txt")
+//    MultiFileCodeResult generateMultiFileCode(String userMessage);
     /**
      * 生成 Vue 项目代码（流式）
      *

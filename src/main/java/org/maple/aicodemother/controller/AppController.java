@@ -21,12 +21,14 @@ import org.maple.aicodemother.exception.ThrowUtils;
 import org.maple.aicodemother.model.dto.app.*;
 import org.maple.aicodemother.model.entity.User;
 import org.maple.aicodemother.model.vo.AppVO;
+import org.maple.aicodemother.ratelimit.annotation.RateLimit;
+import org.maple.aicodemother.ratelimit.enums.RateLimitType;
 import org.maple.aicodemother.service.ProjectDownloadService;
 import org.maple.aicodemother.service.UserService;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.maple.aicodemother.model.entity.App;
 import org.maple.aicodemother.service.AppService;
 import reactor.core.publisher.Flux;
@@ -174,19 +176,7 @@ public class AppController {
     @PostMapping("/good/list/page/vo")
     public BaseResponse<Page<AppVO>> listGoodAppVOByPage(@RequestBody AppQueryRequest appQueryRequest) {
         ThrowUtils.throwIf(appQueryRequest == null, ErrorCode.PARAMS_ERROR);
-        // 限制每页最多 20 个
-        long pageSize = appQueryRequest.getPageSize();
-        ThrowUtils.throwIf(pageSize > 20, ErrorCode.PARAMS_ERROR, "每页最多查询 20 个应用");
-        long pageNum = appQueryRequest.getPageNum();
-        // 只查询精选的应用
-        appQueryRequest.setPriority(AppConstant.GOOD_APP_PRIORITY);
-        QueryWrapper queryWrapper = appService.getQueryWrapper(appQueryRequest);
-        // 分页查询
-        Page<App> appPage = appService.page(Page.of(pageNum, pageSize), queryWrapper);
-        // 数据封装
-        Page<AppVO> appVOPage = new Page<>(pageNum, pageSize, appPage.getTotalRow());
-        List<AppVO> appVOList = appService.getAppVOList(appPage.getRecords());
-        appVOPage.setRecords(appVOList);
+        Page<AppVO> appVOPage = appService.listGoodAppVO(appQueryRequest);
         return ResultUtils.success(appVOPage);
     }
 
@@ -282,6 +272,7 @@ public class AppController {
      * @return 生成结果流
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI对话请求过于频繁，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToGenCode(@RequestParam Long appId,
                                                        @RequestParam String message,
                                                        HttpServletRequest request) {

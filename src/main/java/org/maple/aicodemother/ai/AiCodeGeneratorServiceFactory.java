@@ -10,11 +10,15 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.maple.aicodemother.ai.guardrail.PromptSafetyInputGuardrail;
+import org.maple.aicodemother.ai.guardrail.RetryOutputGuardrail;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
 import org.maple.aicodemother.ai.tools.*;
 import org.maple.aicodemother.exception.BusinessException;
 import org.maple.aicodemother.exception.ErrorCode;
 import org.maple.aicodemother.service.ChatHistoryService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
@@ -25,17 +29,17 @@ import java.time.Duration;
 public class AiCodeGeneratorServiceFactory {
 
 
-    private final ChatModel chatModel;
-
-    private final StreamingChatModel openAiStreamingChatModel;
-
-    private final StreamingChatModel reasoningStreamingChatModel;
-
     private final RedisChatMemoryStore redisChatMemoryStore;
 
     private final ChatHistoryService chatHistoryService;
 
     private final ToolManager toolManager;
+
+    @Qualifier("streamingChatModelPrototype")
+    private final ObjectProvider<StreamingChatModel> openAiStreamingProvider;
+
+    @Qualifier("reasoningStreamingChatModelPrototype")
+    private final ObjectProvider<StreamingChatModel> reasoningStreamingProvider;
 
 
     /**
@@ -89,21 +93,32 @@ public class AiCodeGeneratorServiceFactory {
         // 根据代码生成类型选择不同的模型配置
         return switch (codeGenType) {
             // Vue 项目生成使用推理模型
-            case VUE_PROJECT -> AiServices.builder(AiCodeGeneratorService.class)
-                    .streamingChatModel(reasoningStreamingChatModel)
-                    //由于langchain4j的懒加载机制，如果不在这里设置memoryProvider，会自动丢弃memoryId，导致工具调用失败
-                    .chatMemoryProvider(memoryId -> chatMemory)
-                    .tools((Object[])toolManager.getAllTools())
-                    .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
+            case VUE_PROJECT -> {
+                StreamingChatModel reasoningModel = reasoningStreamingProvider.getObject();
+                yield AiServices.builder(AiCodeGeneratorService.class)
+                        .streamingChatModel(reasoningModel)
+                        //由于langchain4j的懒加载机制，如果不在这里设置memoryProvider，会自动丢弃memoryId，导致工具调用失败
+                        .chatMemoryProvider(memoryId -> chatMemory)
+                        .tools((Object[])toolManager.getAllTools())
+                        .inputGuardrails(new PromptSafetyInputGuardrail())
+                        .outputGuardrails(new RetryOutputGuardrail())
+                        .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
                             toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
-                    ))
-                    .build();
+                        ))
+                        .maxSequentialToolsInvocations(30) // 增加工具调用次数限制，防止生成过程中工具调用过多导致问题
+                        .build();
+            }
             // HTML 和多文件生成使用默认模型
-            case HTML, MULTI_FILE -> AiServices.builder(AiCodeGeneratorService.class)
-                    .chatModel(chatModel)
-                    .streamingChatModel(openAiStreamingChatModel)
-                    .chatMemory(chatMemory)
-                    .build();
+            case HTML, MULTI_FILE -> {
+                StreamingChatModel openAiModel = openAiStreamingProvider.getObject();
+                yield AiServices.builder(AiCodeGeneratorService.class)
+                        .streamingChatModel(openAiModel)
+                        .chatMemory(chatMemory)
+                        .inputGuardrails(new PromptSafetyInputGuardrail())
+                        .outputGuardrails(new RetryOutputGuardrail())
+                        .maxSequentialToolsInvocations(15) // 增加工具调用次数限制，防止生成过程中工具调用过多导致问题
+                        .build();
+            }
             default -> throw new BusinessException(ErrorCode.SYSTEM_ERROR,
                     "不支持的代码生成类型: " + codeGenType.getValue());
         };
