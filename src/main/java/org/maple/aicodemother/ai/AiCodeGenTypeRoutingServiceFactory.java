@@ -2,7 +2,6 @@ package org.maple.aicodemother.ai;
 
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
-import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.guardrail.PromptSafetyInputGuardrail;
@@ -35,7 +34,6 @@ public class AiCodeGenTypeRoutingServiceFactory {
         return AiServices.builder(AiCodeGenTypeRoutingService.class)
                 .chatModel(chatModel)
                 .inputGuardrails(new PromptSafetyInputGuardrail())
-                .outputGuardrails(new RetryOutputGuardrail())
                 .build();
     }
 }

@@ -33,6 +33,7 @@ import org.maple.aicodemother.service.ChatHistoryService;
 import org.maple.aicodemother.service.ScreenshotService;
 import org.maple.aicodemother.service.UserService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -66,6 +67,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private final ScreenshotService screenshotService;
 
     private final AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+
+    @Value("${code.deploy-host}")
+    private String deployHost;
 
     @Override
     public Long createApp(AppAddRequest appAddRequest, User loginUser) {
@@ -218,7 +222,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         updateApp.setDeployedTime(LocalDateTime.now());
         boolean result = this.updateById(updateApp);
         ThrowUtils.throwIf(!result, ErrorCode.SYSTEM_ERROR, "更新应用部署信息失败");
-        String appDeployUrl = StrUtil.format("{}/{}/", AppConstant.CODE_DEPLOY_HOST, deployKey);
+        String appDeployUrl = StrUtil.format("{}/{}/", deployHost, deployKey);
         generateAppScreenshotAsync(appId,appDeployUrl);
         // 这里直接返回部署的访问地址，实际项目中可能需要更复杂的部署流程
         return appDeployUrl;
