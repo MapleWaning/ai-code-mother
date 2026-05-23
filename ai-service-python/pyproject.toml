@@ -1,0 +1,23 @@
+[project]
+name = "ai-code"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "maple",email = "851598145@qq.com"}
+]
+requires-python = "^3.13"
+dependencies = [
+    "fastapi (>=0.136.1,<0.137.0)",
+    "uvicorn[standard] (>=0.47.0,<0.48.0)",
+    "langchain (>=1.3.1,<2.0.0)",
+    "langchain-openai (>=1.2.2,<2.0.0)",
+    "pydantic (>=2.13.4,<3.0.0)",
+    "redis (>=7.4.0,<8.0.0)",
+    "langchain-community (>=0.4.2,<0.5.0)",
+    "pydantic-settings (>=2.14.1,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
