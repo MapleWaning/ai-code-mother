@@ -3,7 +3,6 @@ package org.maple.aicodemother.service;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.service.IService;
-import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import org.maple.aicodemother.model.dto.chathistory.ChatHistoryQueryRequest;
 import org.maple.aicodemother.model.entity.ChatHistory;
 import org.maple.aicodemother.model.entity.User;
@@ -28,5 +27,5 @@ public interface ChatHistoryService extends IService<ChatHistory> {
                                                LocalDateTime lastCreateTime,
                                                User loginUser);
 
-    int loadChatHistoryToMemory(Long appId, MessageWindowChatMemory chatMemory, int maxCount);
+    int preloadChatHistoryToRedis(Long appId, int maxCount);
 }

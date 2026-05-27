@@ -1,6 +1,9 @@
 import os
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import computed_field
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
     # ---------------- 基础 ----------------
@@ -12,6 +15,7 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str
     REDIS_DB: int = 0
     REDIS_TTL: int = 3600
+    REDIS_KEY_PREFIX: str = "message_store:"
 
     # 动态计算字段：组装为 redis://:password@host:port/db 的标准格式
     @computed_field
@@ -40,11 +44,14 @@ class Settings(BaseSettings):
     REASONING_MODEL_TIMEOUT: int = 600
     REASONING_MODEL_PARALLEL_TOOL_CALLS: bool = False
 
+    # ---------------- 文件生成目录 ----------------
+    CODE_OUTPUT_ROOT_DIR: str = str((Path(__file__).resolve().parents[3] / "tmp" / "code_output").resolve())
+
     # 开启 LangChain 的全局 Debug 和 Request 日志 (对应你 yaml 里的 log-requests: true)
     LANGCHAIN_VERBOSE: bool = True
 
     model_config = SettingsConfigDict(
-        env_file=f".env.{os.getenv('APP_ENV', 'local')}", 
+        env_file=(str(BASE_DIR / '.env'), str(BASE_DIR / '.env.local')), 
         env_file_encoding='utf-8',
         extra='ignore'
     )

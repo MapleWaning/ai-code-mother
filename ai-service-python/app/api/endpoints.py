@@ -1,23 +1,17 @@
-# app/api/endpoints.py
 from fastapi import APIRouter
-from pydantic import BaseModel
-from app.service.chat_service import simple_chat
+from fastapi.responses import StreamingResponse
+
+from app.models.schemas import GenerateRequest, RouteRequest, RouteResponse
+from app.services.generation_service import stream_generate
+from app.services.routing_service import route_code_gen_type
 
 router = APIRouter()
 
-# 定义接收 Java 数据的 DTO
-class SimpleChatRequest(BaseModel):
-    message: str
+@router.post("/route", response_model=RouteResponse)
+async def route_endpoint(req: RouteRequest) -> RouteResponse:
+    return await route_code_gen_type(req)
 
-# 定义 POST 接口
-@router.post("/chat")
-async def chat_endpoint(req: SimpleChatRequest):
-    # 调用 Service 层
-    answer = await simple_chat(req.message)
-    
-    # 包装成 JSON 返回给 Java
-    return {
-        "code": 200,
-        "msg": "success",
-        "data": answer
-    }
+
+@router.post("/generate")
+async def generate_endpoint(req: GenerateRequest) -> StreamingResponse:
+    return StreamingResponse(stream_generate(req), media_type="text/event-stream")

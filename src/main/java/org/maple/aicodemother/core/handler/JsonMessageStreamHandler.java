@@ -4,13 +4,8 @@ import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.ai.model.message.*;
-import org.maple.aicodemother.ai.tools.BaseTool;
-import org.maple.aicodemother.ai.tools.ToolManager;
-import org.maple.aicodemother.constant.AppConstant;
-import org.maple.aicodemother.core.builder.VueProjectBuilder;
 import org.maple.aicodemother.model.entity.User;
 import org.maple.aicodemother.model.enums.ChatHistoryMessageTypeEnum;
 import org.maple.aicodemother.service.ChatHistoryService;
@@ -26,13 +21,12 @@ import java.util.Set;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class JsonMessageStreamHandler {
 
-    private final VueProjectBuilder vueProjectBuilder;
-    private final ToolManager toolManager;
+    private static final String STREAMED_TOOL_RESULT = "__streamed_to_frontend__";
+
     /**
-     * 处理 TokenStream（VUE_PROJECT）
+     * 处理 Python VUE_PROJECT JSON 流
      * 解析 JSON 消息并重组为完整的响应格式
      *
      * @param originFlux         原始流
@@ -76,6 +70,10 @@ public class JsonMessageStreamHandler {
         // 解析 JSON
         StreamMessage streamMessage = JSONUtil.toBean(chunk, StreamMessage.class);
         StreamMessageTypeEnum typeEnum = StreamMessageTypeEnum.getEnumByValue(streamMessage.getType());
+        if (typeEnum == null) {
+            log.error("不支持的消息类型: {}", streamMessage.getType());
+            return "";
+        }
         switch (typeEnum) {
             case AI_RESPONSE -> {
                 AiResponseMessage aiMessage = JSONUtil.toBean(chunk, AiResponseMessage.class);
@@ -88,12 +86,12 @@ public class JsonMessageStreamHandler {
                 ToolRequestMessage toolRequestMessage = JSONUtil.toBean(chunk, ToolRequestMessage.class);
                 String toolId = toolRequestMessage.getId();
                 String toolName = toolRequestMessage.getName();
+                String seenKey = StrUtil.blankToDefault(toolId, toolName + ":" + toolRequestMessage.getArguments());
                 // 检查是否是第一次看到这个工具 ID
-                if (toolId != null && !seenToolIds.contains(toolId)) {
+                if (!seenToolIds.contains(seenKey)) {
                     // 第一次调用这个工具，记录 ID 并完整返回工具信息
-                    seenToolIds.add(toolId);
-                    BaseTool tool = toolManager.getTool(toolName);
-                    return tool.generateToolRequestResponse();
+                    seenToolIds.add(seenKey);
+                    return generateToolRequestResponse(toolName);
                 } else {
                     // 不是第一次调用这个工具，直接返回空
                     return "";
@@ -101,10 +99,11 @@ public class JsonMessageStreamHandler {
             }
             case TOOL_EXECUTED -> {
                 ToolExecutedMessage toolExecutedMessage = JSONUtil.toBean(chunk, ToolExecutedMessage.class);
-                JSONObject jsonObject = JSONUtil.parseObj(toolExecutedMessage.getArguments());
-                String toolName = toolExecutedMessage.getName();
-                BaseTool tool = toolManager.getTool(toolName);
-                String result = tool.generateToolExecutedResult(jsonObject);
+                if (STREAMED_TOOL_RESULT.equals(toolExecutedMessage.getResult())) {
+                    return "";
+                }
+                JSONObject arguments = parseToolArguments(toolExecutedMessage.getArguments());
+                String result = generateToolExecutedResult(toolExecutedMessage.getName(), arguments, toolExecutedMessage.getResult());
                 // 输出前端和要持久化的内容
                 String output = String.format("\n\n%s\n\n", result);
                 chatHistoryStringBuilder.append(output);
@@ -115,6 +114,71 @@ public class JsonMessageStreamHandler {
                 return "";
             }
         }
+    }
+
+    private String generateToolRequestResponse(String toolName) {
+        return String.format("\n\n[选择工具] %s\n\n", getToolDisplayName(toolName));
+    }
+
+    private String generateToolExecutedResult(String toolName, JSONObject arguments, String toolResult) {
+        return switch (StrUtil.blankToDefault(toolName, "")) {
+            case "writeFile" -> {
+                String relativeFilePath = arguments.getStr("relativeFilePath");
+                String suffix = FileUtil.getSuffix(relativeFilePath);
+                String content = arguments.getStr("content");
+                yield String.format("""
+                        [工具调用] %s %s
+                        ```%s
+                        %s
+                        ```
+                        """, getToolDisplayName(toolName), relativeFilePath, suffix, content);
+            }
+            case "modifyFile" -> {
+                String relativeFilePath = arguments.getStr("relativeFilePath");
+                String oldContent = arguments.getStr("oldContent");
+                String newContent = arguments.getStr("newContent");
+                yield String.format("""
+                        [工具调用] %s %s
+                        
+                        替换前：
+                        ```
+                        %s
+                        ```
+                        
+                        替换后：
+                        ```
+                        %s
+                        ```
+                        """, getToolDisplayName(toolName), relativeFilePath, oldContent, newContent);
+            }
+            case "readFile", "deleteFile" -> String.format("[工具调用] %s %s",
+                    getToolDisplayName(toolName), arguments.getStr("relativeFilePath"));
+            case "listFiles" -> String.format("[工具调用] %s", getToolDisplayName(toolName));
+            default -> StrUtil.blankToDefault(toolResult, String.format("[工具调用] %s", toolName));
+        };
+    }
+
+    private JSONObject parseToolArguments(String arguments) {
+        if (StrUtil.isBlank(arguments)) {
+            return JSONUtil.createObj();
+        }
+        try {
+            return JSONUtil.parseObj(arguments);
+        } catch (Exception e) {
+            log.warn("工具参数 JSON 解析失败: {}", arguments);
+            return JSONUtil.createObj();
+        }
+    }
+
+    private String getToolDisplayName(String toolName) {
+        return switch (StrUtil.blankToDefault(toolName, "")) {
+            case "writeFile" -> "写入文件";
+            case "readFile" -> "读取文件";
+            case "modifyFile" -> "修改文件";
+            case "deleteFile" -> "删除文件";
+            case "listFiles" -> "读取目录";
+            default -> StrUtil.blankToDefault(toolName, "未知工具");
+        };
     }
 }
 

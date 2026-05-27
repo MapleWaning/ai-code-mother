@@ -2,12 +2,11 @@ package org.maple.aicodemother.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.maple.aicodemother.constant.UserConstant;
@@ -21,9 +20,12 @@ import org.maple.aicodemother.mapper.ChatHistoryMapper;
 import org.maple.aicodemother.model.entity.User;
 import org.maple.aicodemother.model.enums.ChatHistoryMessageTypeEnum;
 import org.maple.aicodemother.service.ChatHistoryService;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -37,6 +39,10 @@ import java.util.List;
 public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatHistory>  implements ChatHistoryService{
 
     private final AppMapper appMapper;
+    private final StringRedisTemplate stringRedisTemplate;
+
+    @Value("${spring.data.redis.ttl:3600}")
+    private long redisTtl;
 
     @Override
     public boolean addChatMessage(Long appId, String message, String messageType, Long userId) {
@@ -127,7 +133,7 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
     }
 
     @Override
-    public int loadChatHistoryToMemory(Long appId, MessageWindowChatMemory chatMemory, int maxCount) {
+    public int preloadChatHistoryToRedis(Long appId, int maxCount) {
         try {
             // 注意：因为调用方是先落库再加载记忆，此处必须 offset 1 跳过刚落库的当前问题，防止大模型收到双重 UserMessage！
             QueryWrapper queryWrapper = QueryWrapper.create()
@@ -135,31 +141,52 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
                     .orderBy(ChatHistory::getCreateTime, false)
                     .limit(1, maxCount);
             List<ChatHistory> historyList = this.list(queryWrapper);
+            String redisKey = buildLangChainRedisKey(appId);
+            stringRedisTemplate.delete(redisKey);
             if (CollUtil.isEmpty(historyList)) {
                 return 0;
             }
             // 反转列表，确保按时间正序（老的在前，新的在后）
             historyList = historyList.reversed();
-            // 按时间顺序添加到记忆中
-            int loadedCount = 0;
-            // 先清理历史缓存，防止重复加载
-            chatMemory.clear();
-            for (ChatHistory history : historyList) {
-                if (ChatHistoryMessageTypeEnum.USER.getValue().equals(history.getMessageType())) {
-                    chatMemory.add(UserMessage.from(history.getMessage()));
-                    loadedCount++;
-                } else if (ChatHistoryMessageTypeEnum.AI.getValue().equals(history.getMessageType())) {
-                    chatMemory.add(AiMessage.from(history.getMessage()));
-                    loadedCount++;
-                }
+            List<String> redisMessages = historyList.stream()
+                    .map(this::toLangChainMessageJson)
+                    .filter(StrUtil::isNotBlank)
+                    .toList();
+            if (CollUtil.isEmpty(redisMessages)) {
+                return 0;
             }
-            log.info("成功为 appId: {} 加载了 {} 条历史对话", appId, loadedCount);
+            stringRedisTemplate.opsForList().rightPushAll(redisKey, redisMessages);
+            if (redisTtl > 0) {
+                stringRedisTemplate.expire(redisKey, Duration.ofSeconds(redisTtl));
+            }
+            int loadedCount = redisMessages.size();
+            log.info("成功为 appId: {} 预热了 {} 条 Redis 对话记忆", appId, loadedCount);
             return loadedCount;
         } catch (Exception e) {
-            log.error("加载历史对话失败，appId: {}, error: {}", appId, e.getMessage(), e);
+            log.error("预热 Redis 对话记忆失败，appId: {}, error: {}", appId, e.getMessage(), e);
             // 加载失败不影响系统运行，只是没有历史上下文
             return 0;
         }
+    }
+
+    private String buildLangChainRedisKey(Long appId) {
+        return "message_store:" + appId;
+    }
+
+    private String toLangChainMessageJson(ChatHistory history) {
+        String langChainType;
+        if (ChatHistoryMessageTypeEnum.USER.getValue().equals(history.getMessageType())) {
+            langChainType = "human";
+        } else if (ChatHistoryMessageTypeEnum.AI.getValue().equals(history.getMessageType())) {
+            langChainType = "ai";
+        } else {
+            return "";
+        }
+        JSONObject data = JSONUtil.createObj().set("content", history.getMessage());
+        return JSONUtil.createObj()
+                .set("type", langChainType)
+                .set("data", data)
+                .toString();
     }
 
 

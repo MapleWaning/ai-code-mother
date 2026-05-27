@@ -10,8 +10,6 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.maple.aicodemother.ai.AiCodeGenTypeRoutingService;
-import org.maple.aicodemother.ai.AiCodeGenTypeRoutingServiceFactory;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
 import org.maple.aicodemother.constant.AppConstant;
 import org.maple.aicodemother.core.AiCodeGeneratorFacade;
@@ -35,11 +33,14 @@ import org.maple.aicodemother.service.UserService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
 import java.io.File;
 import java.io.Serializable;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,10 +67,13 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private final VueProjectBuilder vueProjectBuilder;
     private final ScreenshotService screenshotService;
 
-    private final AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+    private final WebClient.Builder webClientBuilder;
 
     @Value("${code.deploy-host}")
     private String deployHost;
+
+    @Value("${ai-service.python-base-url:http://localhost:8000}")
+    private String pythonAiBaseUrl;
 
     @Override
     public Long createApp(AppAddRequest appAddRequest, User loginUser) {
@@ -82,15 +86,47 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         app.setUserId(loginUser.getId());
         // 应用名称暂时为 initPrompt 前 12 位
         app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 12)));
-        // 使用 AI 智能选择代码生成类型
-        AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService = aiCodeGenTypeRoutingServiceFactory.createAiCodeGenTypeRoutingService();
-        CodeGenTypeEnum selectedCodeGenType = aiCodeGenTypeRoutingService.routeCodeGenType(initPrompt);
+        // 调用 Python AI 微服务智能选择代码生成类型
+        CodeGenTypeEnum selectedCodeGenType = routeCodeGenType(initPrompt);
         app.setCodeGenType(selectedCodeGenType.getValue());
         // 插入数据库
         boolean result = this.save(app);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
         return app.getId();
+    }
+
+    private CodeGenTypeEnum routeCodeGenType(String initPrompt) {
+        PythonRouteResponse routeResponse = webClientBuilder
+                .baseUrl(pythonAiBaseUrl)
+                .build()
+                .post()
+                .uri("/api/route")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .bodyValue(new PythonRouteRequest(initPrompt))
+                .retrieve()
+                .bodyToMono(PythonRouteResponse.class)
+                .block(Duration.ofSeconds(60));
+        if (routeResponse == null) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AI 路由服务无响应");
+        }
+        CodeGenTypeEnum codeGenType = CodeGenTypeEnum.getEnumByValue(routeResponse.codeGenType());
+        if (codeGenType == null && StrUtil.isNotBlank(routeResponse.enumName())) {
+            try {
+                codeGenType = CodeGenTypeEnum.valueOf(routeResponse.enumName());
+            } catch (IllegalArgumentException ignored) {
+                // 交给下面的统一异常处理
+            }
+        }
+        ThrowUtils.throwIf(codeGenType == null, ErrorCode.SYSTEM_ERROR, "AI 路由服务返回了不支持的生成类型");
+        return codeGenType;
+    }
+
+    private record PythonRouteRequest(String initPrompt) {
+    }
+
+    private record PythonRouteResponse(String codeGenType, String enumName, String reason) {
     }
 
 

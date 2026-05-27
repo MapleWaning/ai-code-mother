@@ -1,27 +1,22 @@
 package org.maple.aicodemother.core;
 
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.service.tool.ToolExecution;
-import dev.langchain4j.service.TokenStream;
-import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.maple.aicodemother.ai.AiCodeGeneratorService;
-import org.maple.aicodemother.ai.AiCodeGeneratorServiceFactory;
-import org.maple.aicodemother.ai.model.HtmlCodeResult;
-import org.maple.aicodemother.ai.model.MultiFileCodeResult;
 import org.maple.aicodemother.ai.model.enums.CodeGenTypeEnum;
-import org.maple.aicodemother.ai.model.message.AiResponseMessage;
-import org.maple.aicodemother.ai.model.message.ToolExecutedMessage;
-import org.maple.aicodemother.ai.model.message.ToolRequestMessage;
+import org.maple.aicodemother.ai.model.message.StreamMessageTypeEnum;
 import org.maple.aicodemother.constant.AppConstant;
 import org.maple.aicodemother.core.builder.VueProjectBuilder;
 import org.maple.aicodemother.exception.BusinessException;
 import org.maple.aicodemother.exception.ErrorCode;
 import org.maple.aicodemother.parser.CodeParserExecutor;
 import org.maple.aicodemother.saver.CodeFileSaverExecutor;
+import org.maple.aicodemother.service.ChatHistoryService;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
 import java.io.File;
@@ -31,8 +26,14 @@ import java.io.File;
 @RequiredArgsConstructor
 public class AiCodeGeneratorFacade {
 
-    private final AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
     private final VueProjectBuilder vueProjectBuilder;
+    private final ChatHistoryService chatHistoryService;
+    private final WebClient.Builder webClientBuilder;
+
+    private static final int CHAT_MEMORY_MAX_COUNT = 20;
+
+    @Value("${ai-service.python-base-url:http://localhost:8000}")
+    private String pythonAiBaseUrl;
 
     /**
      * 通用流式代码处理方法
@@ -96,22 +97,22 @@ public class AiCodeGeneratorFacade {
      * @param codeGenTypeEnum 生成类型
      */
     public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
-        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId, codeGenTypeEnum);
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
+        chatHistoryService.preloadChatHistoryToRedis(appId, CHAT_MEMORY_MAX_COUNT);
         return switch (codeGenTypeEnum) {
             case HTML -> {
-                Flux<String> codeStream = aiCodeGeneratorService.generateHtmlCodeStream(userMessage);
-                yield processCodeStream(codeStream, CodeGenTypeEnum.HTML,appId);
+                Flux<String> codeStream = requestPythonGenerateStream(userMessage, codeGenTypeEnum, appId);
+                yield processCodeStream(unwrapPythonTextStream(codeStream), CodeGenTypeEnum.HTML,appId);
             }
             case MULTI_FILE -> {
-                Flux<String> codeStream = aiCodeGeneratorService.generateMultiFileCodeStream(userMessage);
-                yield processCodeStream(codeStream, CodeGenTypeEnum.MULTI_FILE,appId);
+                Flux<String> codeStream = requestPythonGenerateStream(userMessage, codeGenTypeEnum, appId);
+                yield processCodeStream(unwrapPythonTextStream(codeStream), CodeGenTypeEnum.MULTI_FILE,appId);
             }
             case VUE_PROJECT -> {
-                TokenStream codeStream = aiCodeGeneratorService.generateVueProjectCodeStream(appId, userMessage);
-                yield processTokenStream(codeStream,appId);
+                Flux<String> codeStream = requestPythonGenerateStream(userMessage, codeGenTypeEnum, appId);
+                yield processVueProjectStream(codeStream, appId);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
@@ -120,37 +121,52 @@ public class AiCodeGeneratorFacade {
         };
     }
 
+    private Flux<String> requestPythonGenerateStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
+        return webClientBuilder
+                .baseUrl(pythonAiBaseUrl)
+                .build()
+                .post()
+                .uri("/api/generate")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .bodyValue(new PythonGenerateRequest(userMessage, appId, codeGenTypeEnum.getValue()))
+                .retrieve()
+                .bodyToFlux(String.class);
+    }
+
     /**
-     * 将 TokenStream 转换为 Flux<String>，并传递工具调用信息
-     *
-     * @param tokenStream TokenStream 对象
-     * @return Flux<String> 流式响应
+     * HTML/MULTI_FILE 模式下 Python 用 JSON 包装文本块，避免 SSE 丢失纯换行 token。
      */
-    private Flux<String> processTokenStream(TokenStream tokenStream, Long appId) {
-        return Flux.create(sink -> {
-            tokenStream.onPartialResponse((String partialResponse) -> {
-                        AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
-                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
-                    })
-                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
-                        ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
-                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
-                    })
-                    .onToolExecuted((ToolExecution toolExecution) -> {
-                        ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
-                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
-                    })
-                    .onCompleteResponse((ChatResponse response) -> {
-                        String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "/vue_project_" + appId;
-                        vueProjectBuilder.buildProject(projectPath);
-                        sink.complete();
-                    })
-                    .onError((Throwable error) -> {
-                        log.error("生成异常：", error);
-                        sink.error(error);
-                    })
-                    .start();
+    private Flux<String> unwrapPythonTextStream(Flux<String> codeStream) {
+        return codeStream.map(this::unwrapPythonTextChunk);
+    }
+
+    private String unwrapPythonTextChunk(String chunk) {
+        if (!JSONUtil.isTypeJSON(chunk)) {
+            return chunk;
+        }
+        try {
+            JSONObject jsonObject = JSONUtil.parseObj(chunk);
+            if (StreamMessageTypeEnum.AI_RESPONSE.getValue().equals(jsonObject.getStr("type"))) {
+                return jsonObject.getStr("data", "");
+            }
+        } catch (Exception e) {
+            log.warn("Python 文本流 JSON 解包失败，按原始文本处理: {}", chunk);
+        }
+        return chunk;
+    }
+
+    /**
+     * Python VUE_PROJECT 流已经是原 JsonMessageStreamHandler 可识别的 JSON 消息格式。
+     */
+    private Flux<String> processVueProjectStream(Flux<String> codeStream, Long appId) {
+        return codeStream.doOnComplete(() -> {
+            String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
+            vueProjectBuilder.buildProject(projectPath);
         });
+    }
+
+    private record PythonGenerateRequest(String userMessage, Long appId, String codeGenType) {
     }
 
 
