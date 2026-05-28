@@ -6,9 +6,6 @@ from pydantic import computed_field
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
-    # ---------------- 基础 ----------------
-    APP_ENV: str = "local"
-    
     # ---------------- Redis ----------------
     REDIS_HOST: str
     REDIS_PORT: int = 6379
@@ -51,7 +48,7 @@ class Settings(BaseSettings):
     LANGCHAIN_VERBOSE: bool = True
 
     model_config = SettingsConfigDict(
-        env_file=(str(BASE_DIR / '.env'), str(BASE_DIR / '.env.local')), 
+        env_file=(str(BASE_DIR / '.env.dev'), str(BASE_DIR / '.env.local')), 
         env_file_encoding='utf-8',
         extra='ignore'
     )
